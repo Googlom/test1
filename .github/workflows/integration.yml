@@ -1,0 +1,79 @@
+name: Integration stage
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      piper-version:
+        required: false
+        type: string
+        default: 'latest'
+      sap-piper-version:
+        required: false
+        type: string
+        default: 'latest'
+      on-productive-branch:
+        required: true
+        type: string
+      is-optimized-and-scheduled:
+        required: true
+        type: string
+      active-stages-map:
+        required: true
+        type: string
+      active-steps-map:
+        required: true
+        type: string
+      pipeline-env:
+        required: true
+        type: string
+    outputs:
+      pipeline-env: 
+        value: ${{ jobs.Integration.outputs.pipelineEnv }}
+env:
+  PIPER_ACTION_PIPER_VERSION: ${{ inputs.piper-version }}
+  PIPER_ACTION_SAP_PIPER_VERSION: ${{ inputs.sap-piper-version }}
+  PIPER_ACTION_GITHUB_TOOLS_TOKEN: ${{ secrets.GH_TOOLS }}
+  PIPER_vaultAppRoleID: ${{ secrets.PIPER_VAULTAPPROLEID }}
+  PIPER_vaultAppRoleSecretID: ${{ secrets.PIPER_VAULTAPPROLESECRETID }}
+  PIPER_ACTION_PIPELINE_ENV: ${{ inputs.pipeline-env }}
+jobs:
+  Integration:
+    runs-on: self-hosted
+    if: |
+      fromJSON(inputs.active-stages-map).Integration == true &&
+      inputs.is-optimized-and-scheduled == 'false' &&
+      inputs.on-productive-branch == 'true'
+    outputs:
+      pipelineEnv: ${{ steps.pipelineEnv.outputs.pipelineEnv }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: mavenExecuteIntegration
+        if: fromJSON(inputs.active-steps-map)[github.job]['mavenExecuteIntegration'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: mavenExecuteIntegration
+      - name: sapCumulusUpload
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapCumulusUpload'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: '--filePattern **/TEST-*.xml --stepResultType integration-test'
+      - name: sapCumulusUpload
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapCumulusUpload'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: '--filePattern **/requirement.mapping --stepResultType requirement-mapping'
+      - name: sapCumulusUpload
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapCumulusUpload'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: '--filePattern **/delivery.mapping --stepResultType delivery-mapping'
+      - name: Export pipeline environment
+        uses: SAP/project-piper-action@master
+        id: pipelineEnv
+        with:
+          step-name: ''
+          export-pipeline-environment: true

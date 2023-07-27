@@ -1,0 +1,93 @@
+name: Release stage
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      piper-version:
+        required: false
+        type: string
+        default: 'latest'
+      sap-piper-version:
+        required: false
+        type: string
+        default: 'latest'
+      on-productive-branch:
+        required: true
+        type: string
+      is-optimized-and-scheduled:
+        required: true
+        type: string
+      active-stages-map:
+        required: true
+        type: string
+      active-steps-map:
+        required: true
+        type: string
+      pipeline-env:
+        required: true
+        type: string
+    outputs:
+      pipeline-env: 
+        value: ${{ jobs.Release.outputs.pipelineEnv }}
+env:
+  PIPER_ACTION_PIPER_VERSION: ${{ inputs.piper-version }}
+  PIPER_ACTION_SAP_PIPER_VERSION: ${{ inputs.sap-piper-version }}
+  PIPER_ACTION_GITHUB_TOOLS_TOKEN: ${{ secrets.GH_TOOLS }}
+  PIPER_vaultAppRoleID: ${{ secrets.PIPER_VAULTAPPROLEID }}
+  PIPER_vaultAppRoleSecretID: ${{ secrets.PIPER_VAULTAPPROLESECRETID }}
+  PIPER_ACTION_PIPELINE_ENV: ${{ inputs.pipeline-env }}
+jobs:
+  Release:
+    runs-on: self-hosted
+    environment: 'Piper Release'
+    if: |
+      fromJSON(inputs.active-stages-map).Release == true &&
+      inputs.is-optimized-and-scheduled == 'false' &&
+      inputs.on-productive-branch == 'true'
+    outputs:
+      pipelineEnv: ${{ steps.pipelineEnv.outputs.pipelineEnv }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: terraformExecute
+        if: fromJSON(inputs.active-steps-map)[github.job]['terraformExecute'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: terraformExecute
+      - name: gitopsUpdateDeployment
+        if: fromJSON(inputs.active-steps-map)[github.job]['gitopsUpdateDeployment'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: gitopsUpdateDeployment
+      - name: sapDownloadArtifact
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapDownloadArtifact'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapDownloadArtifact
+          flags: '--fromStaging=false'
+      - name: cloudFoundryDeploy
+        if: fromJSON(inputs.active-steps-map)[github.job]['cloudFoundryDeploy'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: cloudFoundryDeploy
+      - name: kubernetesDeploy
+        if: fromJSON(inputs.active-steps-map)[github.job]['kubernetesDeploy'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: kubernetesDeploy
+      - name: sapDwCStageRelease
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapDwCStageRelease'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapDwCStageRelease
+      - name: githubPublishRelease
+        if: fromJSON(inputs.active-steps-map)[github.job]['githubPublishRelease'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: githubPublishRelease
+      - name: Export pipeline environment
+        uses: SAP/project-piper-action@master
+        id: pipelineEnv
+        with:
+          step-name: ''
+          export-pipeline-environment: true

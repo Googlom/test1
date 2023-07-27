@@ -1,0 +1,110 @@
+name: Acceptance stage
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      piper-version:
+        required: false
+        type: string
+        default: 'latest'
+      sap-piper-version:
+        required: false
+        type: string
+        default: 'latest'
+      on-productive-branch:
+        required: true
+        type: string
+      is-optimized-and-scheduled:
+        required: true
+        type: string
+      active-stages-map:
+        required: true
+        type: string
+      active-steps-map:
+        required: true
+        type: string
+      pipeline-env:
+        required: true
+        type: string
+    outputs:
+      pipeline-env: 
+        value: ${{ jobs.Acceptance.outputs.pipelineEnv }}
+env:
+  PIPER_ACTION_PIPER_VERSION: ${{ inputs.piper-version }}
+  PIPER_ACTION_SAP_PIPER_VERSION: ${{ inputs.sap-piper-version }}
+  PIPER_ACTION_GITHUB_TOOLS_TOKEN: ${{ secrets.GH_TOOLS }}
+  PIPER_vaultAppRoleID: ${{ secrets.PIPER_VAULTAPPROLEID }}
+  PIPER_vaultAppRoleSecretID: ${{ secrets.PIPER_VAULTAPPROLESECRETID }}
+  PIPER_ACTION_PIPELINE_ENV: ${{ inputs.pipeline-env }}
+jobs:
+  Acceptance:
+    runs-on: self-hosted
+    environment: 'Piper Acceptance'
+    if: |
+      fromJSON(inputs.active-stages-map).Acceptance == true &&
+      inputs.is-optimized-and-scheduled == 'false' &&
+      inputs.on-productive-branch == 'true'
+    outputs:
+      pipelineEnv: ${{ steps.pipelineEnv.outputs.pipelineEnv }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: terraformExecute
+        if: fromJSON(inputs.active-steps-map)[github.job]['terraformExecute'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: terraformExecute
+      - name: sapDownloadArtifact
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapDownloadArtifact'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapDownloadArtifact
+      - name: cloudFoundryDeploy
+        if: fromJSON(inputs.active-steps-map)[github.job]['cloudFoundryDeploy'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: cloudFoundryDeploy
+      - name: kubernetesDeploy
+        if: fromJSON(inputs.active-steps-map)[github.job]['kubernetesDeploy'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: kubernetesDeploy
+      - name: newmanExecute
+        if: fromJSON(inputs.active-steps-map)[github.job]['newmanExecute'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: newmanExecute
+      - name: uiVeri5ExecuteTests
+        if: fromJSON(inputs.active-steps-map)[github.job]['uiVeri5ExecuteTests'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: uiVeri5ExecuteTests
+      - name: gaugeExecuteTests
+        if: fromJSON(inputs.active-steps-map)[github.job]['gaugeExecuteTests'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: gaugeExecuteTests
+      - name: sapCumulusUpload
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapCumulusUpload'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: '--filePattern **/TEST-*.xml --stepResultType acceptance-test'
+      - name: sapCumulusUpload
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapCumulusUpload'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: '--filePattern **/requirement.mapping --stepResultType requirement-mapping'
+      - name: sapCumulusUpload
+        if: fromJSON(inputs.active-steps-map)[github.job]['sapCumulusUpload'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: '--filePattern **/delivery.mapping --stepResultType delivery-mapping'
+      - name: Export pipeline environment
+        uses: SAP/project-piper-action@master
+        id: pipelineEnv
+        with:
+          step-name: ''
+          export-pipeline-environment: true

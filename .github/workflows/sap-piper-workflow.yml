@@ -1,0 +1,454 @@
+name: Piper general purpose pipeline
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      piper-version:
+        required: false
+        type: string
+        default: 'latest'
+      sap-piper-version:
+        required: false
+        type: string
+        default: 'latest'
+env:
+  PIPER_ACTION_PIPER_VERSION: ${{ inputs.piper-version }}
+  PIPER_ACTION_SAP_PIPER_VERSION: ${{ inputs.sap-piper-version }}
+  PIPER_ACTION_GITHUB_TOOLS_TOKEN: ${{ secrets.GH_TOOLS }}
+  PIPER_vaultAppRoleID: ${{ secrets.PIPER_VAULTAPPROLEID }}
+  PIPER_vaultAppRoleSecretID: ${{ secrets.PIPER_VAULTAPPROLESECRETID }}
+jobs:
+  Init:
+    runs-on: self-hosted
+    outputs:
+      activeStagesMap: ${{ steps.checkIfStepActive.outputs.activeStagesMap }}
+      activeStepsMap: ${{ steps.checkIfStepActive.outputs.activeStepsMap }}
+      pipelineEnv: ${{ steps.pipelineEnv.outputs.pipelineEnv }}
+      onProductiveBranch: ${{ steps.export.outputs.onProductiveBranch }}
+      isOptimizedAndScheduled: ${{ steps.export.outputs.isOptimizedAndScheduled }}
+      pipelineOptimization: ${{ steps.export.outputs.pipelineOptimization }}
+      manualConfirmation: ${{ steps.export.outputs.manualConfirmation }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: version
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: version
+      - name: Read stage configuration
+        id: stage_config
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: getConfig
+          flags: --stageConfig --outputFile stage-config.json
+      - name: Read productive branch config    
+        run: |
+          echo "productiveBranch=$(jq -j .productiveBranch stage-config.json)" >> $GITHUB_ENV
+      - name: Retrieve setting for productive branch
+        run: |
+          if [[ "${{ github.ref_name }}" == "${{ env.productiveBranch }}" ]]; then
+            echo "onProductiveBranch=true" >> $GITHUB_ENV
+          else
+            echo "onProductiveBranch=false" >> $GITHUB_ENV
+          fi
+      - run: |
+          echo "::notice::Branch ${{ github.ref_name }} is productive branch: ${{ env.onProductiveBranch }}"
+      - name: Retrieve setting for manual confirmation    
+        run: |
+          if [[ $(jq -j .manualConfirmation stage-config.json) == "true" ]]; then
+            echo "manualConfirmation=true" >> $GITHUB_ENV
+            echo "::notice::Pipeline requires manual confirmation: true"
+          else
+            echo "manualConfirmation=false" >> $GITHUB_ENV
+            echo "::notice::Pipeline requires manual confirmation: false"
+          fi
+      - run: |
+          echo "::notice::Triggering event: ${{ github.event_name }}"
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "scheduledRun=true" >> $GITHUB_ENV
+            echo "::notice::Pipeline is scheduled: true"
+          else
+            echo "scheduledRun=false" >> $GITHUB_ENV
+            echo "::notice::Pipeline is scheduled: false"
+          fi
+      - run: |
+          if [[ $(jq -j .pipelineOptimization stage-config.json) == "true" ]]; then
+            echo "pipelineOptimization=true" >> $GITHUB_ENV
+            echo "::notice::Pipeline optimization is active: true"
+          else
+            echo "pipelineOptimization=false" >> $GITHUB_ENV
+            echo "::notice::Pipeline optimization is active: false"
+          fi
+      - run: |
+          if [[ "${{ env.pipelineOptimization }}" == "true" && "${{ github.event_name }}" == "schedule" ]]; then
+            echo "isOptimizedAndScheduled=true" >> $GITHUB_ENV
+            echo "::notice::Pipeline is scheduled and optimized: true"
+          else
+            echo "isOptimizedAndScheduled=false" >> $GITHUB_ENV
+            echo "::notice::Pipeline is scheduled and optimized: false"
+          fi
+      - id: export
+        run: |
+          echo "::set-output name=onProductiveBranch::${{ env.onProductiveBranch }}"
+          echo "::set-output name=isOptimizedAndScheduled::${{ env.isOptimizedAndScheduled }}"
+          echo "::set-output name=pipelineOptimization::${{ env.pipelineOptimization }}"
+          echo "::set-output name=manualConfirmation::${{ env.manualConfirmation }}"
+      - name: sapPipelineInit
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapPipelineInit 
+          flags: --isScheduled=${{ env.scheduledRun }}
+      - name: checkIfStepActive
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: ''
+          create-check-if-step-active-maps: true
+      - name: Export checkIfStepActive maps
+        if: always()
+        id: checkIfStepActive
+        run: |
+          echo "::set-output name=activeStagesMap::$(jq -c . < .pipeline/stage_out.json)"
+          echo "::set-output name=activeStepsMap::$(jq -c . < .pipeline/step_out.json)"
+      - name: Export pipeline environment
+        uses: SAP/project-piper-action@master
+        id: pipelineEnv
+        with:
+          step-name: ''
+          export-pipeline-environment: true
+  Build:
+    runs-on: self-hosted
+    needs: Init
+    if: fromJSON(needs.Init.outputs.activeStagesMap).Build == true
+    env:
+      PIPER_ACTION_PIPELINE_ENV: ${{ needs.Init.outputs.pipelineEnv }}
+    outputs:
+      activeStagesMap: ${{ steps.checkIfStepActive.outputs.activeStagesMap }}
+      activeStepsMap: ${{ steps.checkIfStepActive.outputs.activeStepsMap }}
+      pipelineEnv: ${{ steps.pipelineEnv.outputs.pipelineEnv }}
+    steps:
+      - uses: actions/checkout@v3
+      - id: stage_config
+        name: Read stage configuration
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: getConfig
+          flags: --stageConfig --outputFile stage-config.json
+      - run: |
+          echo "buildTool=$(jq -j .buildTool stage-config.json)" >> $GITHUB_ENV 
+          echo "::notice::buildTool=$(jq -j .buildTool stage-config.json)" 
+      - run: |
+          if [[ ${{ env.buildTool }} == "maven" ]]; then
+            echo "dockerImage=maven:3.6-jdk-8" >> $GITHUB_ENV
+          elif [[ ${{ env.buildTool }} == "gradle" ]]; then
+            echo "dockerImage=gradle:6-jdk11-alpine" >> $GITHUB_ENV
+          fi
+      - name: artifactPrepareVersion
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['artifactPrepareVersion'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: artifactPrepareVersion
+          docker-image: ${{ env.dockerImage }}
+      - name: artifactPrepareVersion
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['artifactPrepareVersion'] == true &&
+          needs.Init.outputs.onProductiveBranch != 'true' && env.buildTool != 'maven'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: artifactPrepareVersion
+          flags: --versioningType cloud_noTag
+          docker-image: ${{ env.dockerImage }}
+      - name: sapCallStagingService
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCallStagingService'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCallStagingService
+          flags: '--action createGroup'
+      - name: sapCallStagingService
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCallStagingService'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCallStagingService
+          flags: '--action createRepositories'
+      - name: mtaBuild
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['mtaBuild'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: mtaBuild
+          flags: --publish
+      - name: gradleExecuteBuild
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['gradleExecuteBuild'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: gradleExecuteBuild
+          flags: --publish --createBOM
+      - name: npmExecuteScripts
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['npmExecuteScripts'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: npmExecuteScripts
+          flags: --publish --createBOM
+      - name: mavenBuild
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['mavenBuild'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: mavenBuild
+          flags: '--publish --createBOM --logSuccessfulMavenTransfers'
+      - name: pythonBuild
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['pythonBuild'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: pythonBuild
+          flags: '--publish --createBOM'
+      - name: golangBuild
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['golangBuild'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: golangBuild
+          flags: '--publish --createBOM'
+      - name: kanikoExecute
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['kanikoExecute'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: kanikoExecute
+          flags: '--createBOM'
+      - name: cnbBuild
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['cnbBuild'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: cnbBuild
+      - name: hadolintExecute
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['hadolintExecute'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: hadolintExecute
+      - name: helmExecute
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['helmExecute'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: helmExecute
+          flags: '--publish'
+      # There is a special case in the stage configuration for sapDownloadArtifact
+      # which depends on the existence of a CPE value that is dynamically created by helmExecute.
+      # Therefore checkIfStepActive needs to run again if helmExecute is executed
+      - name: checkIfStepActive (post helmExecute)
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['helmExecute'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: ''
+          create-check-if-step-active-maps: true
+      - name: sapCumulusUpload (URL log upload)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern **/url-log.json --stepResultType url-log
+      - name: sapGenerateEnvironmentInfo
+        if: needs.Init.outputs.onProductiveBranch == 'true'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapGenerateEnvironmentInfo
+          flags: --buildEnvironment Hyperspace_GitHubActions_native_BuildStep
+      - uses: actions/upload-artifact@v3
+        if: |
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        with:
+          path: ./build-settings.json
+      - uses: actions/upload-artifact@v3
+        if: needs.Init.outputs.onProductiveBranch == 'true'
+        with:
+          path: ./env*.json
+      - name: sapCumulusUpload (build settings info)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern build-settings.json --stepResultType settings
+      - name: sapCumulusUpload (environment info)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern env*.json --stepResultType root
+      - name: sapCumulusUpload (SBom)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern **/bom*.xml --stepResultType sbom
+      - name: sapCallStagingService
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCallStagingService'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCallStagingService
+          flags: '--action close'
+      # - name: karmaExecuteTests
+      #   if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['karmaExecuteTests'] == true
+      #   uses: SAP/project-piper-action@master
+      #   with:
+      #     step-name: karmaExecuteTests
+      - name: sapCumulusUpload (junit test results)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern **/TEST-*.xml --stepResultType junit
+      - name: sapCumulusUpload (jacoco code coverage results)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern **/jacoco.xml --stepResultType jacoco-coverage
+      - name: sapCumulusUpload (cobertura test coverage results)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern **/cobertura-coverage.xml --stepResultType cobertura-coverage
+      - name: sapCumulusUpload (requirement mapping)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern **/requirement.mapping --stepResultType requirement-mapping
+      - name: sonarExecuteScan
+        if: fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sonarExecuteScan'] == true
+        uses: SAP/project-piper-action@master
+        with: 
+          step-name: sonarExecuteScan
+      - name: sapCumulusUpload (sonarqube results)
+        if: |
+          fromJSON(needs.Init.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          needs.Init.outputs.isOptimizedAndScheduled == 'false'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern **/sonarscan-result.json,**/sonarscan.json --stepResultType sonarqube
+      - name: Export checkIfStepActive maps
+        if: always()
+        id: checkIfStepActive
+        run: |
+          if [ -f .pipeline/stage_out.json ]; then
+            echo "::set-output name=activeStagesMap::$(jq -c . < .pipeline/stage_out.json)"
+            echo "::set-output name=activeStepsMap::$(jq -c . < .pipeline/step_out.json)"
+          else
+            echo "::set-output name=activeStagesMap::$( jq -c . <<< '${{ needs.Init.outputs.activeStagesMap }}' )"
+            echo "::set-output name=activeStepsMap::$( jq -c . <<< '${{ needs.Init.outputs.activeStepsMap }}' )"
+          fi
+      - name: Export pipeline environment
+        uses: SAP/project-piper-action@master
+        id: pipelineEnv
+        with:
+          step-name: ''
+          export-pipeline-environment: true
+  Promote:
+    runs-on: self-hosted
+    needs: [Init, Build]
+    # TODO: add manual confirmation condition
+    if: |
+      fromJSON(needs.Build.outputs.activeStagesMap).Promote == true &&
+      needs.Init.outputs.isOptimizedAndScheduled == 'false' &&
+      needs.Init.outputs.onProductiveBranch == 'true'
+    env:
+      PIPER_ACTION_PIPELINE_ENV: ${{ needs.Build.outputs.pipelineEnv }}
+    outputs:
+      pipelineEnv: ${{ steps.pipelineEnv.outputs.checkIfStepActiveAndCPE }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: sapCallStagingService
+        if: fromJSON(needs.Build.outputs.activeStepsMap)[github.job]['sapCallStagingService'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCallStagingService
+          flags: --action promote
+      - name: Read stage configuration
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: getConfig
+          flags: --stageConfig --outputFile stage-config.json
+      - run: |
+          echo "lockPipelineRun=$(jq -j .lockPipelineRun stage-config.json)" >> $GITHUB_ENV
+          echo "::notice::lockPipelineRun $(jq -j .lockPipelineRun stage-config.json)"
+      - if: needs.Init.outputs.onProductiveBranch == 'true' && env.lockPipelineRun == 'true'
+        run: |
+          echo "::notice::Writing lock-run.json for productive branch"
+          touch lock-run.json
+      - name: sapCumulusUpload (release status info)
+        if: |
+          fromJSON(needs.Build.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true &&
+          needs.Init.outputs.onProductiveBranch == 'true'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern "**/release-status-*.json" --stepResultType .status-log/release
+      - name: sapCumulusUpload (lock-run.json)
+        if: | 
+          fromJSON(needs.Build.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true && 
+          needs.Init.outputs.onProductiveBranch == 'true' &&
+          env.lockPipelineRun == 'true'
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: --filePattern "**/lock-run.json" --stepResultType root
+      - name: Export pipeline environment
+        uses: SAP/project-piper-action@master
+        id: pipelineEnv
+        with:
+          step-name: ''
+          export-pipeline-environment: true
+  Post:
+    runs-on: self-hosted
+    needs: [Init, Build, Promote]
+    if: |
+      always() && !cancelled() &&
+      fromJSON(needs.Build.outputs.activeStagesMap).Post == true
+    env:
+      PIPER_ACTION_PIPELINE_ENV: ${{ needs.Build.outputs.pipelineEnv }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: vaultRotateSecretId
+        if: fromJSON(needs.Build.outputs.activeStepsMap)[github.job]['vaultRotateSecretId'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: vaultRotateSecretId
+          flags: '--secretStore github --owner ${{ github.repository_owner }} --repository ${{ github.event.repository.name }} --githubApiUrl ${{ github.api_url }} --vaultAppRoleSecretTokenCredentialsId PIPER_vaultAppRoleID --githubToken ${{ secrets.GH_TOOLS }}'
+      - name: sapReportPipelineStatus
+        if: fromJSON(needs.Build.outputs.activeStepsMap)[github.job]['sapReportPipelineStatus'] == true
+        uses: SAP/project-piper-action@master
+        env:
+          GITHUB_URL: 'https://github.tools.sap/'
+        with:
+          step-name: sapReportPipelineStatus
+          flags: '--splunkReporting false --gitHubToken ${{ secrets.GH_TOOLS }}'
+      - name: sapCumulusUpload (pipelineLog)
+        if: fromJSON(needs.Build.outputs.activeStepsMap)[github.job]['sapCumulusUpload'] == true
+        uses: SAP/project-piper-action@master
+        with:
+          step-name: sapCumulusUpload
+          flags: '--filePattern ./pipelineLog*.log --stepResultType log'
