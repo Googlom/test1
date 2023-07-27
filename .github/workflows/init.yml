@@ -51,6 +51,10 @@ jobs:
         uses: SAP/project-piper-action@update_node_version
         with:
           command: version
+      - name: Get NodeJS Version
+        id: nodeversion
+        run: |
+          echo "$(node --version)"
       - name: Read stage configuration
         id: stage_config
         uses: SAP/project-piper-action@update_node_version
