@@ -50,7 +50,7 @@ jobs:
       - name: version
         uses: SAP/project-piper-action@update_node_version
         with:
-          step-name: version
+          command: version
       - name: Read stage configuration
         id: stage_config
         uses: SAP/project-piper-action@update_node_version
@@ -109,11 +109,6 @@ jobs:
           echo "::set-output name=isOptimizedAndScheduled::${{ env.isOptimizedAndScheduled }}"
           echo "::set-output name=pipelineOptimization::${{ env.pipelineOptimization }}"
           echo "::set-output name=manualConfirmation::${{ env.manualConfirmation }}"
-      - name: sapPipelineInit
-        uses: SAP/project-piper-action@update_node_version
-        with:
-          command: sapPipelineInit
-          flags: --isScheduled=${{ env.scheduledRun }}
       - name: checkIfStepActive
         uses: SAP/project-piper-action@update_node_version
         with:
