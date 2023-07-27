@@ -20,7 +20,7 @@ env:
   PIPER_vaultAppRoleSecretID: ${{ secrets.PIPER_VAULTAPPROLESECRETID }}
 jobs:
   Init:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       activeStagesMap: ${{ steps.checkIfStepActive.outputs.activeStagesMap }}
       activeStepsMap: ${{ steps.checkIfStepActive.outputs.activeStepsMap }}
