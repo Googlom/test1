@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: version
-        uses: SAP/project-piper-action@update_node_version
+        uses: SAP/project-piper-action@testgulom
         with:
           command: version
       - name: Get NodeJS Version
@@ -56,7 +56,7 @@ jobs:
           echo "${{ matrix.version }}"
       - name: Read stage configuration
         id: stage_config
-        uses: SAP/project-piper-action@update_node_version
+        uses: SAP/project-piper-action@testgulom
         with:
           command: getConfig
           flags: --stageConfig --outputFile stage-config.json
@@ -113,7 +113,7 @@ jobs:
           echo "::set-output name=pipelineOptimization::${{ env.pipelineOptimization }}"
           echo "::set-output name=manualConfirmation::${{ env.manualConfirmation }}"
       - name: checkIfStepActive
-        uses: SAP/project-piper-action@update_node_version
+        uses: SAP/project-piper-action@testgulom
         with:
           command: ''
           create-check-if-step-active-maps: true
@@ -124,7 +124,7 @@ jobs:
           echo "::set-output name=activeStagesMap::$(jq -c . < .pipeline/stage_out.json)"
           echo "::set-output name=activeStepsMap::$(jq -c . < .pipeline/step_out.json)"
       - name: Export pipeline environment
-        uses: SAP/project-piper-action@update_node_version
+        uses: SAP/project-piper-action@testgulom
         id: pipelineEnv
         with:
           command: ''
